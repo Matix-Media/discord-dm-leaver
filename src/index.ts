@@ -1,20 +1,41 @@
 import axios from "axios";
-import { exit } from "process";
+import { readFileSync } from "fs";
+import { argv, exit } from "process";
 import * as readline from "readline/promises";
 import { WebSocket } from "ws";
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const whitelist: string[] = [];
 let lastSequence: number;
+let whitelist: string[] = [];
+let token: string;
 
-while (true) {
-    const result = await rl.question("Add a group to whitelist (name or ID) or press RETURN to go to next step: ");
-    if (result == "") break;
-    whitelist.push(result);
+const configIndex = argv.indexOf("--config");
+let config: { token: string; whitelist: string[] };
+if (configIndex != -1) {
+    if (argv.length < configIndex + 1) {
+        console.error("Please specify a config file");
+        exit(1);
+    }
+
+    config = JSON.parse(readFileSync(argv[configIndex + 1], { encoding: "utf-8" }));
+    whitelist = config.whitelist;
+    token = config.token;
 }
 
-const token = await rl.question("Specify your Discord token: ");
-rl.close();
+if (!config) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+    while (true) {
+        const result = await rl.question("Add a group to whitelist (name or ID) or press RETURN to go to next step: ");
+        if (result == "") break;
+        whitelist.push(result);
+    }
+
+    token = await rl.question("Specify your Discord token: ");
+
+    rl.close();
+} else {
+    console.log("Loaded config");
+}
 
 console.log("Connecting to Discord...");
 const ws = new WebSocket("wss://gateway.discord.gg/?v=6&encoding=json");
@@ -34,7 +55,12 @@ const eventHandlers: { [key: string]: (message: unknown) => void | Promise<void>
 
         for (const channel of privateChannels) {
             if (whitelist.includes(channel.id) || (channel.name && whitelist.includes(channel.name))) continue;
-            if (channel.type && channel.type == 1 && whitelist.includes(channel.recipients[0].id)) continue;
+            if (
+                channel.type &&
+                channel.type == 1 &&
+                (whitelist.includes(channel.recipients[0].id) || whitelist.includes(channel.recipients[0].username))
+            )
+                continue;
 
             if (channel.type && channel.type == 3)
                 //console.log(channel);
